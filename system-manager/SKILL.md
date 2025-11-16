@@ -1,687 +1,889 @@
-# System & Documentation Manager
+# System & Documentation Manager with Mem-Layer
 
-Expert in managing system documentation, knowledge bases, RAG (Retrieval-Augmented Generation) systems, notifications, and tracking what has/hasn't worked. Ensures continuous documentation, organized knowledge management, and intelligent information retrieval through integration with external agents.
+Expert in managing system state, documentation, and knowledge using mem-layer's graph-based memory system. Automatically tracks decisions, maintains context, monitors what works and what doesn't, and provides intelligent retrieval of project history and knowledge.
+
+**Powered by mem-layer**: Graph-based memory management for organized, queryable system knowledge.
 
 ## When to use this skill
 
-- Creating and maintaining documentation
-- Setting up RAG systems for knowledge retrieval
-- Organizing project documentation
-- Tracking decisions and outcomes
-- Managing notification systems
-- Building knowledge bases
-- Documenting what works and what doesn't
-- Creating searchable documentation
-- Maintaining project wikis
-- Integrating with external documentation agents
+- Tracking project decisions and rationale
+- Maintaining system context across sessions
+- Recording what works and what doesn't
+- Querying historical decisions and outcomes
+- Building searchable knowledge graphs
+- Feeding context to AI about past work
+- Documenting architecture and design decisions
+- Monitoring system state and changes
+- Creating relationships between concepts
+- Intelligent context retrieval
 
 ## Core Expertise
 
-### Documentation Management
+### Mem-Layer Integration
 
-#### Documentation Philosophy
-- **Document continuously** - Don't wait until the end
-- **Document decisions** - Especially why, not just what
-- **Track failures** - What didn't work and why
-- **Keep it searchable** - Structure for easy retrieval
-- **Automate where possible** - Reduce manual effort
+#### What is Mem-Layer?
+Graph-based memory management system that stores knowledge as nodes (entities, notes) connected by edges (relationships). Perfect for:
+- **Decision tracking** - Store architecture decisions as nodes
+- **Context building** - Query related information via graph traversal
+- **Outcome tracking** - Link decisions to their results
+- **Knowledge organization** - Use scopes for different contexts
+- **Intelligent retrieval** - Find relevant information through relationships
 
-#### Documentation Structure
-```
-project/
-├── docs/
-│   ├── README.md                # Project overview
-│   ├── ARCHITECTURE.md          # System architecture
-│   ├── API.md                   # API documentation
-│   ├── DEPLOYMENT.md            # Deployment guide
-│   ├── TROUBLESHOOTING.md       # Common issues
-│   ├── decisions/               # Decision records
-│   │   ├── 001-database-choice.md
-│   │   └── 002-authentication.md
-│   ├── what-works/              # Successful approaches
-│   │   └── deployment-process.md
-│   ├── what-doesnt-work/        # Failed approaches (lessons learned)
-│   │   └── attempted-optimization.md
-│   └── guides/                  # How-to guides
-│       ├── setup.md
-│       └── testing.md
-├── .knowledge-base/             # RAG knowledge base
-│   ├── embeddings/
-│   └── index/
-└── notifications/               # Notification configs
-    └── config.yaml
-```
+Repository: https://github.com/0xSero/mem-layer
 
-#### Architecture Decision Records (ADR)
-```markdown
-# ADR-001: Database Choice
-
-## Status
-Accepted
-
-## Context
-We need to store user data with complex relationships and need ACID compliance.
-
-## Decision
-We will use PostgreSQL as our primary database.
-
-## Consequences
-
-### Positive
-- ACID compliance
-- Rich query capabilities
-- Strong ecosystem
-- Good performance for our use case
-
-### Negative
-- More complex than NoSQL for simple queries
-- Requires more operational overhead
-
-## Alternatives Considered
-- MongoDB - Rejected: Need ACID compliance
-- SQLite - Rejected: Need multi-user support
-
-## Date
-2025-11-15
-```
-
-### RAG System Setup
-
-#### Building a Documentation RAG System
+#### Mem-Layer CLI Integration
 ```python
-from langchain_community.document_loaders import DirectoryLoader, MarkdownLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain.chains import RetrievalQA
-from langchain_community.llms import Ollama
-
-class DocumentationRAG:
-    """RAG system for project documentation"""
-
-    def __init__(self, docs_dir: str, persist_dir: str = ".knowledge-base"):
-        self.docs_dir = docs_dir
-        self.persist_dir = persist_dir
-
-        # Initialize embeddings (local, no API needed)
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
-
-        # Initialize vector store
-        self.vectorstore = None
-        self.load_or_create_vectorstore()
-
-    def load_or_create_vectorstore(self):
-        """Load existing or create new vector store"""
-        from pathlib import Path
-
-        if Path(self.persist_dir).exists():
-            # Load existing
-            self.vectorstore = Chroma(
-                persist_directory=self.persist_dir,
-                embedding_function=self.embeddings
-            )
-            print("Loaded existing knowledge base")
-        else:
-            # Create new
-            self.vectorstore = self.create_vectorstore()
-            print("Created new knowledge base")
-
-    def create_vectorstore(self):
-        """Create vector store from documentation"""
-        # Load markdown files
-        loader = DirectoryLoader(
-            self.docs_dir,
-            glob="**/*.md",
-            loader_cls=MarkdownLoader
-        )
-        documents = loader.load()
-
-        # Split into chunks
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            separators=["\n## ", "\n### ", "\n", " ", ""]
-        )
-        splits = text_splitter.split_documents(documents)
-
-        # Create and persist vectorstore
-        vectorstore = Chroma.from_documents(
-            documents=splits,
-            embedding=self.embeddings,
-            persist_directory=self.persist_dir
-        )
-        vectorstore.persist()
-
-        return vectorstore
-
-    def update_vectorstore(self):
-        """Update vectorstore with new/changed documents"""
-        # Delete old vectorstore
-        import shutil
-        if Path(self.persist_dir).exists():
-            shutil.rmtree(self.persist_dir)
-
-        # Recreate
-        self.vectorstore = self.create_vectorstore()
-
-    def query(self, question: str, k: int = 3) -> str:
-        """Query the documentation"""
-        # Create retrieval chain
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=Ollama(model="llama3.2"),  # Local LLM
-            chain_type="stuff",
-            retriever=self.vectorstore.as_retriever(
-                search_kwargs={"k": k}
-            ),
-            return_source_documents=True
-        )
-
-        result = qa_chain({"query": question})
-
-        # Format response with sources
-        answer = result["result"]
-        sources = [doc.metadata.get("source", "") for doc in result["source_documents"]]
-
-        response = f"{answer}\n\nSources:\n"
-        for source in set(sources):
-            response += f"- {source}\n"
-
-        return response
-
-    def similar_docs(self, query: str, k: int = 5):
-        """Find similar documentation sections"""
-        docs = self.vectorstore.similarity_search(query, k=k)
-
-        results = []
-        for doc in docs:
-            results.append({
-                "content": doc.page_content[:200] + "...",
-                "source": doc.metadata.get("source", "unknown"),
-                "full_content": doc.page_content
-            })
-
-        return results
-```
-
-### What Works / What Doesn't Tracking
-
-#### Success/Failure Logger
-```python
+import subprocess
+import json
+from typing import List, Dict, Optional
 from datetime import datetime
-from pathlib import Path
-import yaml
 
-class OutcomeTracker:
-    """Track what works and what doesn't"""
+class MemLayerManager:
+    """Manage system knowledge using mem-layer"""
 
-    def __init__(self, base_dir: str = "docs"):
-        self.base_dir = Path(base_dir)
-        self.works_dir = self.base_dir / "what-works"
-        self.doesnt_work_dir = self.base_dir / "what-doesnt-work"
+    def __init__(self, scope: Optional[str] = None):
+        """
+        Initialize mem-layer manager
 
-        self.works_dir.mkdir(parents=True, exist_ok=True)
-        self.doesnt_work_dir.mkdir(parents=True, exist_ok=True)
+        Args:
+            scope: Scope name (defaults to current project)
+        """
+        self.scope = scope
+        self._ensure_initialized()
 
-    def log_success(
+    def _ensure_initialized(self):
+        """Ensure mem-layer scope is initialized"""
+        try:
+            # Check if scope exists
+            result = subprocess.run(
+                ["mem-layer", "scope", "list"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+
+            if self.scope and self.scope not in result.stdout:
+                # Initialize scope
+                subprocess.run(
+                    ["mem-layer", "init", "--scope", "project", "--name", self.scope],
+                    check=True
+                )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "mem-layer not installed. Install from: "
+                "https://github.com/0xSero/mem-layer"
+            )
+
+    def add_decision(
         self,
         title: str,
-        description: str,
-        category: str,
-        details: dict = None
-    ):
-        """Log a successful approach"""
-        filename = self._make_filename(title)
-        filepath = self.works_dir / f"{filename}.md"
+        decision: str,
+        rationale: str,
+        alternatives: Optional[List[str]] = None,
+        tags: Optional[List[str]] = None,
+        importance: float = 0.8
+    ) -> str:
+        """
+        Record an architectural or technical decision
 
-        content = f"""# {title}
+        Returns:
+            Node ID of the created decision
+        """
+        # Create decision content
+        content = f"""DECISION: {title}
 
-**Category:** {category}
-**Date:** {datetime.now():%Y-%m-%d}
-**Status:** ✅ Works
+What: {decision}
 
-## Description
-{description}
+Why: {rationale}"""
 
-## Details
-"""
-        if details:
-            for key, value in details.items():
-                content += f"\n### {key}\n{value}\n"
+        if alternatives:
+            content += f"\n\nAlternatives considered:\n"
+            for alt in alternatives:
+                content += f"- {alt}\n"
 
-        content += f"""
+        # Add to mem-layer
+        decision_tags = ["decision", "architecture"] + (tags or [])
 
-## Reproducible Steps
-1. [Add steps here]
+        result = subprocess.run(
+            [
+                "mem-layer", "add", "entity",
+                content,
+                "--tags", ",".join(decision_tags),
+                "--importance", str(importance)
+            ] + (["--scope", self.scope] if self.scope else []),
+            capture_output=True,
+            text=True,
+            check=True
+        )
 
-## Notes
-- [Add any additional notes]
+        # Extract node ID from output
+        node_id = self._extract_node_id(result.stdout)
 
-## Related
-- [Link to related documentation]
-"""
+        return node_id
 
-        with open(filepath, 'w') as f:
-            f.write(content)
-
-        print(f"✅ Success logged: {filepath}")
-
-    def log_failure(
+    def add_outcome(
         self,
         title: str,
-        description: str,
-        category: str,
-        why_failed: str,
-        lessons_learned: str,
-        details: dict = None
-    ):
-        """Log a failed approach (valuable for learning)"""
-        filename = self._make_filename(title)
-        filepath = self.doesnt_work_dir / f"{filename}.md"
+        what_happened: str,
+        worked: bool,
+        lessons: Optional[str] = None,
+        related_decision: Optional[str] = None,
+        tags: Optional[List[str]] = None
+    ) -> str:
+        """
+        Record what worked or didn't work
 
-        content = f"""# {title}
+        Args:
+            worked: True if successful, False if failed
+            related_decision: Node ID of related decision
+        """
+        status = "✅ WORKED" if worked else "❌ DIDN'T WORK"
 
-**Category:** {category}
-**Date:** {datetime.now():%Y-%m-%d}
-**Status:** ❌ Doesn't Work
+        content = f"""{status}: {title}
 
-## What We Tried
-{description}
+What happened: {what_happened}"""
 
-## Why It Failed
-{why_failed}
+        if lessons:
+            content += f"\n\nLessons learned:\n{lessons}"
 
-## Lessons Learned
-{lessons_learned}
+        outcome_tags = ["outcome", "worked" if worked else "failed"] + (tags or [])
 
-## Details
-"""
-        if details:
-            for key, value in details.items():
-                content += f"\n### {key}\n{value}\n"
+        result = subprocess.run(
+            [
+                "mem-layer", "add", "note",
+                content,
+                "--tags", ",".join(outcome_tags),
+                "--priority", "high" if not worked else "normal"
+            ] + (["--scope", self.scope] if self.scope else []),
+            capture_output=True,
+            text=True,
+            check=True
+        )
 
-        content += f"""
+        node_id = self._extract_node_id(result.stdout)
 
-## What to Try Instead
-- [Alternative approaches]
+        # Link to related decision if provided
+        if related_decision:
+            self.relate(
+                related_decision,
+                node_id,
+                "resulted_in"
+            )
 
-## References
-- [Related documentation or issues]
-"""
+        return node_id
 
-        with open(filepath, 'w') as f:
-            f.write(content)
+    def add_context(
+        self,
+        title: str,
+        context: str,
+        context_type: str = "session",
+        tags: Optional[List[str]] = None
+    ) -> str:
+        """
+        Add contextual information about work done
 
-        print(f"❌ Failure logged (valuable lesson): {filepath}")
+        Args:
+            context_type: Type of context (session, deployment, feature, bugfix)
+        """
+        content = f"""{context_type.upper()}: {title}
 
-    @staticmethod
-    def _make_filename(title: str) -> str:
-        """Convert title to filename"""
+{context}
+
+Recorded: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+
+        context_tags = ["context", context_type] + (tags or [])
+
+        result = subprocess.run(
+            [
+                "mem-layer", "add", "note",
+                content,
+                "--tags", ",".join(context_tags)
+            ] + (["--scope", self.scope] if self.scope else []),
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        return self._extract_node_id(result.stdout)
+
+    def relate(
+        self,
+        source_id: str,
+        target_id: str,
+        relationship: str = "relates_to"
+    ) -> str:
+        """
+        Create relationship between nodes
+
+        Common relationships:
+        - relates_to: General relation
+        - resulted_in: Decision → Outcome
+        - depends_on: Dependency
+        - implements: Implementation of concept
+        - supersedes: Replaces previous decision
+        """
+        result = subprocess.run(
+            ["mem-layer", "relate", source_id, target_id, "--type", relationship],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        return self._extract_node_id(result.stdout)
+
+    def query_decisions(self, pattern: str = "*", limit: int = 20) -> List[Dict]:
+        """Query decisions from memory"""
+        return self._query_by_tag("decision", pattern, limit)
+
+    def query_outcomes(
+        self,
+        worked: Optional[bool] = None,
+        pattern: str = "*",
+        limit: int = 20
+    ) -> List[Dict]:
+        """Query outcomes (what worked/didn't work)"""
+        tag = "outcome"
+        if worked is not None:
+            tag = "worked" if worked else "failed"
+
+        return self._query_by_tag(tag, pattern, limit)
+
+    def query_context(
+        self,
+        context_type: Optional[str] = None,
+        pattern: str = "*",
+        limit: int = 20
+    ) -> List[Dict]:
+        """Query contextual information"""
+        tag = context_type if context_type else "context"
+        return self._query_by_tag(tag, pattern, limit)
+
+    def search(self, text: str, limit: int = 20) -> List[Dict]:
+        """Full-text search across all knowledge"""
+        result = subprocess.run(
+            [
+                "mem-layer", "search",
+                text,
+                "--limit", str(limit)
+            ] + (["--scope", self.scope] if self.scope else []),
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        return self._parse_search_results(result.stdout)
+
+    def get_related(self, node_id: str, depth: int = 2) -> Dict:
+        """Get node and its related nodes via graph traversal"""
+        result = subprocess.run(
+            ["mem-layer", "traverse", node_id, "--depth", str(depth)],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        return self._parse_traversal_results(result.stdout)
+
+    def get_stats(self) -> Dict:
+        """Get graph statistics"""
+        result = subprocess.run(
+            ["mem-layer", "graph", "stats"]
+            + (["--scope", self.scope] if self.scope else []),
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        return self._parse_stats(result.stdout)
+
+    def provide_context(self, query: str, max_items: int = 5) -> str:
+        """
+        Provide relevant context for a query
+
+        This is the key function for feeding context to AI
+        """
+        # Search for relevant information
+        results = self.search(query, limit=max_items)
+
+        if not results:
+            return "No relevant context found in system memory."
+
+        context = f"## Relevant System Context for: {query}\n\n"
+
+        for i, item in enumerate(results, 1):
+            context += f"### {i}. {item.get('type', 'Note')}\n"
+            context += f"{item.get('content', '')}\n\n"
+
+            # Add tags for additional context
+            if item.get('tags'):
+                context += f"*Tags: {', '.join(item['tags'])}*\n\n"
+
+        return context
+
+    def _query_by_tag(
+        self,
+        tag: str,
+        pattern: str = "*",
+        limit: int = 20
+    ) -> List[Dict]:
+        """Internal: Query nodes by tag"""
+        # Use search with tag in query
+        result = subprocess.run(
+            [
+                "mem-layer", "search",
+                f"#{tag}",
+                "--limit", str(limit)
+            ] + (["--scope", self.scope] if self.scope else []),
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        return self._parse_search_results(result.stdout)
+
+    def _extract_node_id(self, output: str) -> str:
+        """Extract node ID from mem-layer output"""
+        # Look for patterns like "Created entity: abc12345"
         import re
-        # Convert to lowercase, replace spaces with hyphens
-        filename = title.lower().replace(" ", "-")
-        # Remove special characters
-        filename = re.sub(r'[^a-z0-9-]', '', filename)
-        return filename
+        match = re.search(r'Created \w+: ([a-f0-9]+)', output)
+        if match:
+            return match.group(1)
 
-    def search_outcomes(self, query: str) -> dict:
-        """Search through outcomes"""
-        results = {"works": [], "doesnt_work": []}
+        match = re.search(r'relationship: ([a-f0-9]+)', output)
+        if match:
+            return match.group(1)
 
-        # Search what works
-        for filepath in self.works_dir.glob("*.md"):
-            with open(filepath) as f:
-                content = f.read()
-                if query.lower() in content.lower():
-                    results["works"].append({
-                        "title": filepath.stem,
-                        "path": str(filepath)
-                    })
+        # Fallback: return first 8-char hex string found
+        match = re.search(r'([a-f0-9]{8})', output)
+        if match:
+            return match.group(1)
 
-        # Search what doesn't work
-        for filepath in self.doesnt_work_dir.glob("*.md"):
-            with open(filepath) as f:
-                content = f.read()
-                if query.lower() in content.lower():
-                    results["doesnt_work"].append({
-                        "title": filepath.stem,
-                        "path": str(filepath)
+        return ""
+
+    def _parse_search_results(self, output: str) -> List[Dict]:
+        """Parse search results from mem-layer output"""
+        # This is simplified - in reality you'd parse the table output
+        # or use JSON export if available
+        results = []
+
+        # Basic parsing of table output
+        lines = output.split('\n')
+        for line in lines:
+            if '│' in line and not line.startswith('│ ID'):
+                parts = [p.strip() for p in line.split('│') if p.strip()]
+                if len(parts) >= 3:
+                    results.append({
+                        'id': parts[0],
+                        'type': parts[1] if len(parts) > 1 else 'note',
+                        'content': parts[2] if len(parts) > 2 else '',
+                        'tags': []
                     })
 
         return results
-```
 
-### Notification System
+    def _parse_traversal_results(self, output: str) -> Dict:
+        """Parse traversal results"""
+        return {
+            'nodes': self._parse_search_results(output),
+            'raw_output': output
+        }
 
-#### Notification Manager
-```python
-import smtplib
-from email.message import EmailMessage
-from typing import List, Dict
-import requests
+    def _parse_stats(self, output: str) -> Dict:
+        """Parse statistics output"""
+        stats = {}
+        lines = output.split('\n')
 
-class NotificationManager:
-    """
-    Manage notifications across different channels.
-    User will configure with their own agents/services.
-    """
+        for line in lines:
+            if ':' in line:
+                key, value = line.split(':', 1)
+                key = key.strip().lower().replace(' ', '_')
+                value = value.strip()
 
-    def __init__(self, config_path: str = "notifications/config.yaml"):
-        self.config = self._load_config(config_path)
-        # User will configure actual notification channels
+                # Try to convert to number
+                try:
+                    value = int(value)
+                except ValueError:
+                    try:
+                        value = float(value)
+                    except ValueError:
+                        pass
 
-    def notify(
+                stats[key] = value
+
+        return stats
+
+
+class MemLayerHelper:
+    """High-level helper for common system-manager tasks"""
+
+    def __init__(self, project_name: Optional[str] = None):
+        from pathlib import Path
+
+        # Use current directory name as project if not specified
+        if not project_name:
+            project_name = Path.cwd().name
+
+        self.manager = MemLayerManager(scope=project_name)
+        self.project = project_name
+
+    def record_deployment(
         self,
-        title: str,
-        message: str,
-        level: str = "info",
-        channels: List[str] = None
-    ):
-        """
-        Send notification through configured channels
-        Level: info, warning, error, critical
-        """
-        if not channels:
-            channels = self.config.get("default_channels", ["console"])
+        version: str,
+        environment: str,
+        changes: List[str],
+        success: bool = True,
+        notes: Optional[str] = None
+    ) -> str:
+        """Record a deployment"""
+        title = f"Deployment {version} to {environment}"
 
-        for channel in channels:
-            try:
-                if channel == "console":
-                    self._notify_console(title, message, level)
-                elif channel == "email":
-                    self._notify_email(title, message, level)
-                elif channel == "slack":
-                    self._notify_slack(title, message, level)
-                elif channel == "custom":
-                    # User will implement custom notification agent
-                    self._notify_custom_agent(title, message, level)
-            except Exception as e:
-                print(f"Failed to send notification via {channel}: {e}")
+        content = f"""Deployed version {version} to {environment}
 
-    def _notify_console(self, title: str, message: str, level: str):
-        """Console notification"""
-        icons = {
-            "info": "ℹ️",
-            "warning": "⚠️",
-            "error": "❌",
-            "critical": "🚨"
-        }
-        icon = icons.get(level, "ℹ️")
-        print(f"\n{icon} {title}\n{message}\n")
-
-    def _notify_email(self, title: str, message: str, level: str):
-        """Email notification (user must configure SMTP)"""
-        if "email" not in self.config:
-            return
-
-        email_config = self.config["email"]
-
-        msg = EmailMessage()
-        msg["Subject"] = f"[{level.upper()}] {title}"
-        msg["From"] = email_config["from"]
-        msg["To"] = email_config["to"]
-        msg.set_content(message)
-
-        # User needs to configure SMTP settings
-        # with smtplib.SMTP(email_config["smtp_server"]) as smtp:
-        #     smtp.send_message(msg)
-
-        print(f"[Email notification would be sent: {title}]")
-
-    def _notify_slack(self, title: str, message: str, level: str):
-        """Slack notification (user must configure webhook)"""
-        if "slack" not in self.config:
-            return
-
-        webhook_url = self.config["slack"]["webhook_url"]
-
-        payload = {
-            "text": f"*{title}*\n{message}",
-            "username": "System Manager",
-        }
-
-        # requests.post(webhook_url, json=payload)
-        print(f"[Slack notification would be sent: {title}]")
-
-    def _notify_custom_agent(self, title: str, message: str, level: str):
-        """
-        Custom notification agent integration
-        User will implement their own notification agent
-        """
-        print(f"[Custom agent notification: {title}]")
-        # TODO: User implements custom agent integration
-
-    def _load_config(self, config_path: str) -> dict:
-        """Load notification configuration"""
-        from pathlib import Path
-
-        if not Path(config_path).exists():
-            return {"default_channels": ["console"]}
-
-        with open(config_path) as f:
-            return yaml.safe_load(f)
-```
-
-### Integration with External Agents
-
-#### Agent Scaffolding
-```python
-class ExternalAgentConnector:
-    """
-    Scaffold for connecting to external agents
-    User will configure actual agent connections
-    """
-
-    def __init__(self, agent_config: dict = None):
-        self.config = agent_config or {}
-        # User will add actual agent connections
-
-    async def call_documentation_agent(self, task: str, context: dict):
-        """
-        Call external documentation agent
-        User implements actual agent communication
-        """
-        print(f"[Would call documentation agent for: {task}]")
-        # TODO: Implement actual agent call
-        return {"status": "pending", "task": task}
-
-    async def call_knowledge_agent(self, query: str):
-        """
-        Call external knowledge management agent
-        """
-        print(f"[Would call knowledge agent with: {query}]")
-        # TODO: Implement actual agent call
-        return {"status": "pending", "query": query}
-
-    async def trigger_notification_agent(self, notification: dict):
-        """
-        Trigger external notification agent
-        """
-        print(f"[Would trigger notification agent: {notification}]")
-        # TODO: Implement actual agent trigger
-        return {"status": "pending", "notification": notification}
-```
-
-### Automated Documentation
-
-#### Auto-Documentation Generator
-```python
-class AutoDocGenerator:
-    """Generate documentation automatically"""
-
-    def document_code_changes(self, git_diff: str) -> str:
-        """Generate documentation from code changes"""
-        # Use LLM to analyze changes and generate docs
-        prompt = f"""Analyze these code changes and generate documentation:
-
-{git_diff}
-
-Create documentation that explains:
-1. What changed
-2. Why (if evident from commit messages)
-3. Impact on users/developers
-4. Any new APIs or changes to existing ones
-"""
-        # User can integrate with LLM here
-        return "[Generated documentation based on changes]"
-
-    def generate_api_docs(self, code_files: List[str]) -> str:
-        """Generate API documentation from code"""
-        # Parse code and extract API information
-        # Generate markdown documentation
-        return "[Generated API documentation]"
-
-    def update_changelog(self, version: str, changes: List[str]):
-        """Update CHANGELOG.md"""
-        from pathlib import Path
-
-        changelog = Path("CHANGELOG.md")
-
-        new_entry = f"""
-## [{version}] - {datetime.now():%Y-%m-%d}
-
-### Added
+Changes:
 """
         for change in changes:
-            new_entry += f"- {change}\n"
+            content += f"- {change}\n"
 
-        if changelog.exists():
-            existing = changelog.read_text()
-            updated = new_entry + "\n" + existing
-        else:
-            updated = f"# Changelog\n\n{new_entry}"
+        if notes:
+            content += f"\nNotes:\n{notes}"
 
-        changelog.write_text(updated)
+        return self.manager.add_context(
+            title,
+            content,
+            context_type="deployment",
+            tags=["deployment", environment, version]
+        )
+
+    def record_bug_fix(
+        self,
+        bug_description: str,
+        solution: str,
+        root_cause: Optional[str] = None
+    ) -> str:
+        """Record a bug fix"""
+        content = f"""Bug: {bug_description}
+
+Solution: {solution}"""
+
+        if root_cause:
+            content += f"\n\nRoot cause: {root_cause}"
+
+        return self.manager.add_outcome(
+            f"Bug fix: {bug_description[:50]}",
+            content,
+            worked=True,
+            tags=["bugfix"]
+        )
+
+    def record_feature(
+        self,
+        feature_name: str,
+        description: str,
+        implementation_notes: Optional[str] = None
+    ) -> str:
+        """Record a new feature"""
+        content = f"""Feature: {feature_name}
+
+{description}"""
+
+        if implementation_notes:
+            content += f"\n\nImplementation:\n{implementation_notes}"
+
+        return self.manager.add_context(
+            feature_name,
+            content,
+            context_type="feature",
+            tags=["feature"]
+        )
+
+    def ask_system(self, question: str) -> str:
+        """
+        Ask a question and get context from system memory
+
+        This is the key interface for AI to query history
+        """
+        return self.manager.provide_context(question)
+
+    def whats_worked(self, area: Optional[str] = None) -> List[Dict]:
+        """Get list of what's worked"""
+        pattern = area if area else "*"
+        return self.manager.query_outcomes(worked=True, pattern=pattern)
+
+    def whats_failed(self, area: Optional[str] = None) -> List[Dict]:
+        """Get list of what hasn't worked"""
+        pattern = area if area else "*"
+        return self.manager.query_outcomes(worked=False, pattern=pattern)
+
+    def get_decisions(self, area: Optional[str] = None) -> List[Dict]:
+        """Get architectural decisions"""
+        pattern = area if area else "*"
+        return self.manager.query_decisions(pattern=pattern)
+
+    def session_summary(self, summary: str, key_changes: List[str]) -> str:
+        """Record session summary"""
+        content = f"""Session Summary
+
+{summary}
+
+Key changes:
+"""
+        for change in key_changes:
+            content += f"- {change}\n"
+
+        return self.manager.add_context(
+            f"Session {datetime.now().strftime('%Y-%m-%d')}",
+            content,
+            context_type="session",
+            tags=["session-summary"]
+        )
 ```
 
-## Project Structure
+### Automatic Context Feeding
 
+#### Context Provider for AI Sessions
+```python
+class ContextProvider:
+    """Automatically provide context to AI based on current work"""
+
+    def __init__(self, project_name: Optional[str] = None):
+        self.helper = MemLayerHelper(project_name)
+
+    def get_context_for_file(self, filepath: str) -> str:
+        """Get relevant context when working on a file"""
+        # Search for mentions of this file
+        context = self.helper.ask_system(filepath)
+
+        # Add recent changes to this area
+        recent = self.helper.manager.query_context(
+            context_type="session",
+            limit=5
+        )
+
+        if recent:
+            context += "\n\n## Recent Work\n"
+            for item in recent[:3]:
+                context += f"- {item.get('content', '')[:100]}...\n"
+
+        return context
+
+    def get_context_for_feature(self, feature_name: str) -> str:
+        """Get context for implementing a feature"""
+        # Check if we've done something similar before
+        context = self.helper.ask_system(feature_name)
+
+        # Check what's worked in similar areas
+        similar_successes = self.helper.whats_worked(feature_name)
+
+        if similar_successes:
+            context += "\n\n## Similar Successful Approaches\n"
+            for success in similar_successes[:3]:
+                context += f"- {success.get('content', '')[:150]}...\n"
+
+        return context
+
+    def get_context_for_bug(self, bug_description: str) -> str:
+        """Get context for fixing a bug"""
+        # Search for similar bugs
+        context = self.helper.ask_system(bug_description)
+
+        # Look for related bug fixes
+        bug_fixes = self.helper.manager.search(
+            f"bug {bug_description}",
+            limit=5
+        )
+
+        if bug_fixes:
+            context += "\n\n## Related Bug Fixes\n"
+            for fix in bug_fixes:
+                context += f"- {fix.get('content', '')[:150]}...\n"
+
+        return context
+
+    def get_architectural_context(self, topic: str) -> str:
+        """Get architectural decisions related to a topic"""
+        decisions = self.helper.get_decisions(topic)
+
+        context = f"## Architectural Decisions: {topic}\n\n"
+
+        for decision in decisions:
+            context += f"### Decision\n"
+            context += f"{decision.get('content', '')}\n\n"
+
+        return context
 ```
-project/
-├── docs/                          # All documentation
-│   ├── README.md
-│   ├── decisions/                 # ADRs
-│   ├── what-works/               # Success logs
-│   ├── what-doesnt-work/         # Failure logs
-│   └── guides/
-├── .knowledge-base/              # RAG embeddings
-├── notifications/
-│   └── config.yaml
-└── system-manager/
-    ├── rag_system.py
-    ├── outcome_tracker.py
-    ├── notification_manager.py
-    └── auto_docs.py
+
+### CLI Integration
+
+#### Command-line Interface for Quick Operations
+```python
+#!/usr/bin/env python3
+"""
+system-manager CLI - Quick access to system management functions
+"""
+
+import click
+from system_manager import MemLayerHelper, ContextProvider
+
+@click.group()
+def cli():
+    """System Manager - Track decisions, context, and outcomes"""
+    pass
+
+@cli.command()
+@click.argument('title')
+@click.option('--decision', required=True, help='The decision made')
+@click.option('--why', required=True, help='Rationale for decision')
+@click.option('--alt', multiple=True, help='Alternatives considered')
+def decide(title, decision, why, alt):
+    """Record a decision"""
+    helper = MemLayerHelper()
+    node_id = helper.manager.add_decision(
+        title=title,
+        decision=decision,
+        rationale=why,
+        alternatives=list(alt) if alt else None
+    )
+    click.echo(f"✓ Decision recorded: {node_id}")
+
+@cli.command()
+@click.argument('title')
+@click.option('--what', required=True, help='What happened')
+@click.option('--worked/--failed', default=True, help='Did it work?')
+@click.option('--lessons', help='Lessons learned')
+def outcome(title, what, worked, lessons):
+    """Record an outcome (what worked or didn't)"""
+    helper = MemLayerHelper()
+    node_id = helper.manager.add_outcome(
+        title=title,
+        what_happened=what,
+        worked=worked,
+        lessons=lessons
+    )
+    status = "✓" if worked else "✗"
+    click.echo(f"{status} Outcome recorded: {node_id}")
+
+@cli.command()
+@click.argument('question')
+def ask(question):
+    """Ask system for context"""
+    provider = ContextProvider()
+    context = provider.helper.ask_system(question)
+    click.echo(context)
+
+@cli.command()
+@click.option('--area', help='Filter by area')
+def worked(area):
+    """Show what's worked"""
+    helper = MemLayerHelper()
+    results = helper.whats_worked(area)
+
+    click.echo("\n✅ What's Worked:\n")
+    for item in results:
+        click.echo(f"- {item.get('content', '')[:100]}")
+
+@cli.command()
+@click.option('--area', help='Filter by area')
+def failed(area):
+    """Show what hasn't worked"""
+    helper = MemLayerHelper()
+    results = helper.whats_failed(area)
+
+    click.echo("\n❌ What Hasn't Worked:\n")
+    for item in results:
+        click.echo(f"- {item.get('content', '')[:100]}")
+
+@cli.command()
+def stats():
+    """Show system statistics"""
+    helper = MemLayerHelper()
+    stats = helper.manager.get_stats()
+
+    click.echo("\n📊 System Stats:\n")
+    for key, value in stats.items():
+        click.echo(f"{key}: {value}")
+
+if __name__ == '__main__':
+    cli()
 ```
 
-## Resources
+### Usage Examples
 
-The `resources/` directory contains:
-- Documentation templates
-- ADR templates
-- RAG system configurations
-- Notification templates
-- Agent integration examples
+#### Example 1: Recording a Decision
+```python
+from system_manager import MemLayerHelper
 
-## Scripts
+helper = MemLayerHelper("my-project")
 
-The `scripts/` directory contains:
-- `init-docs.sh` - Initialize documentation structure
-- `update-rag.sh` - Update RAG knowledge base
-- `query-docs.sh` - Query documentation via RAG
-- `generate-report.sh` - Generate documentation reports
+# Record architectural decision
+decision_id = helper.manager.add_decision(
+    title="Database Choice",
+    decision="Use PostgreSQL for primary database",
+    rationale="Need ACID compliance and complex querying",
+    alternatives=[
+        "MongoDB - Rejected: Need strong consistency",
+        "SQLite - Rejected: Need multi-user support"
+    ],
+    tags=["database", "architecture"]
+)
 
-## Hooks
+# Later, record how it went
+helper.manager.add_outcome(
+    title="PostgreSQL performance",
+    what_happened="Query performance excellent for our use case",
+    worked=True,
+    lessons="Proper indexing crucial for complex joins",
+    related_decision=decision_id
+)
+```
 
-The `hooks/` directory contains:
-- Post-commit documentation hooks
-- Notification trigger hooks
-- RAG update hooks
+#### Example 2: Getting Context for AI
+```python
+from system_manager import ContextProvider
 
-## Agents
+provider = ContextProvider("my-project")
 
-The `agents/` directory contains:
-- `doc-generator` - Auto-generate documentation
-- `knowledge-indexer` - Index and update knowledge base
-- `outcome-analyzer` - Analyze success/failure patterns
-- `notification-router` - Route notifications intelligently
+# When starting work on authentication
+context = provider.get_architectural_context("authentication")
+print(context)
+# AI now has all past decisions about auth!
+
+# When fixing a bug
+bug_context = provider.get_context_for_bug("login timeout")
+print(bug_context)
+# Shows related bug fixes and decisions
+```
+
+#### Example 3: Session Management
+```python
+# At start of session, get context
+helper = MemLayerHelper()
+recent_decisions = helper.get_decisions()
+
+# Do work...
+
+# At end of session, record summary
+helper.session_summary(
+    "Implemented user authentication",
+    key_changes=[
+        "Added JWT token generation",
+        "Implemented refresh token flow",
+        "Added rate limiting to login endpoint"
+    ]
+)
+```
+
+#### Example 4: CLI Usage
+```bash
+# Record a decision
+system-manager decide "API Authentication" \
+  --decision "Use JWT with refresh tokens" \
+  --why "Stateless, scalable, industry standard" \
+  --alt "Session cookies - less flexible" \
+  --alt "OAuth only - adds complexity"
+
+# Record what worked
+system-manager outcome "JWT Implementation" \
+  --what "JWT auth working perfectly, easy to scale" \
+  --worked \
+  --lessons "Remember to set proper expiration times"
+
+# Ask for context
+system-manager ask "How did we handle authentication?"
+
+# See what's worked
+system-manager worked --area authentication
+
+# Get stats
+system-manager stats
+```
+
+## Integration Points
+
+### With Other Skills
+
+**`/data-reporter/`** - Activity tracking feeds into mem-layer
+```python
+# data-reporter records activities
+# system-manager converts them to knowledge
+
+from data_reporter import ActivityTracker
+from system_manager import MemLayerHelper
+
+tracker = ActivityTracker()
+helper = MemLayerHelper()
+
+# At session end
+summary = tracker.get_session_summary()
+helper.session_summary(
+    f"Session: {summary['duration_minutes']:.0f} minutes",
+    [f"Commands: {summary['total_commands']}",
+     f"Files: {summary['total_files']}"]
+)
+```
+
+**`/automater/`** - Automation decisions tracked
+```python
+# When creating automation
+helper.manager.add_decision(
+    title="Automate deployment",
+    decision="Use GitHub Actions for CI/CD",
+    rationale="Free for public repos, good integration",
+    tags=["automation", "cicd"]
+)
+```
+
+**`/cleaner/`** - Code quality outcomes tracked
+```python
+# After cleanup
+helper.manager.add_outcome(
+    title="Removed any types from codebase",
+    what_happened="Type safety improved, caught 5 bugs",
+    worked=True,
+    lessons="TypeScript strict mode catches issues early",
+    tags=["code-quality", "typescript"]
+)
+```
+
+## Best Practices
+
+1. **Record decisions immediately** - Don't wait
+2. **Always include rationale** - Future you will thank you
+3. **Track failures** - They're learning opportunities
+4. **Link related nodes** - Build the knowledge graph
+5. **Use consistent tags** - Makes searching easier
+6. **Query before deciding** - Check if you've solved this before
+7. **Regular reviews** - Query old decisions to see if they still make sense
+8. **Feed context to AI** - Use `ask_system()` liberally
 
 ## Quick Start
 
 ```bash
-# Initialize documentation structure
-mkdir -p docs/{decisions,what-works,what-doesnt-work,guides}
+# Install mem-layer
+git clone https://github.com/0xSero/mem-layer
+cd mem-layer
+pip install -e .
 
-# Set up RAG system
-python -c "
-from system_manager import DocumentationRAG
-rag = DocumentationRAG('docs')
-"
+# Initialize for project
+mem-layer init --scope project --name my-project
 
-# Query documentation
-python -c "
-from system_manager import DocumentationRAG
-rag = DocumentationRAG('docs')
-answer = rag.query('How do we handle authentication?')
-print(answer)
-"
-
-# Log successful approach
-python -c "
-from system_manager import OutcomeTracker
-tracker = OutcomeTracker()
-tracker.log_success(
-    'Deployment Process',
-    'Automated deployment using GitHub Actions',
-    'DevOps',
-    {'time_saved': '2 hours per deploy'}
-)
-"
+# Start using system-manager
+python
+>>> from system_manager import MemLayerHelper
+>>> helper = MemLayerHelper("my-project")
+>>> helper.manager.add_decision(
+...     "Use mem-layer for knowledge management",
+...     "Graph-based, queryable, perfect for context",
+...     "Keeps system organized and provides AI context"
+... )
 ```
-
-## Integration with Other Skills
-
-- Central skill for all documentation needs
-- Integrates with `/data-reporter/` for activity documentation
-- Works with `/automater/` for documenting automations
-- Supports all skills by providing documentation framework
-
-## Best Practices
-
-1. **Document as you go** - Don't defer documentation
-2. **Log failures** - They're as valuable as successes
-3. **Keep it searchable** - Use consistent structure
-4. **Update regularly** - Keep documentation current
-5. **Use templates** - Ensure consistency
-6. **Link related docs** - Create knowledge graph
-7. **Version documentation** - Track changes over time
-8. **Make it accessible** - Easy to find and read
-9. **Automate when possible** - Reduce manual effort
-10. **Review periodically** - Remove outdated content
-
-## External Agent Integration Notes
-
-This skill provides scaffolding for external agent integration. The user will configure:
-
-1. Documentation generation agents
-2. Knowledge management agents
-3. Notification routing agents
-4. Custom workflow agents
-
-Scaffolding provides:
-- Interface definitions
-- Placeholder methods
-- Integration points marked with TODO
-- Example configurations
 
 ## Notes
 
-- RAG system uses local embeddings (no API required)
-- Notification channels are configurable
-- External agent integration is scaffolded
-- Documentation should be version controlled
-- Keep documentation close to code
-- Automate documentation updates
-- Track what works AND what doesn't
-- Use templates for consistency
+- Mem-layer stores everything in a graph database
+- Scopes keep projects separated
+- Queries use graph traversal for related information
+- Perfect for building AI context
+- Searchable, queryable, organized
+- Tracks relationships between concepts
+- No more lost decisions or forgotten context
+- System stays organized automatically
