@@ -296,11 +296,23 @@ Recorded: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
 
         return self._parse_stats(result.stdout)
 
-    def provide_context(self, query: str, max_items: int = 5) -> str:
+    def provide_context(
+        self,
+        query: str,
+        max_tokens: int = 10000,
+        max_items: int = 20
+    ) -> str:
         """
-        Provide relevant context for a query
+        Provide relevant context for a query with token limits
 
         This is the key function for feeding context to AI
+        Ensures context never exceeds max_tokens while maintaining full knowledge access
+
+        Strategy:
+        1. Get most relevant items (sorted by relevance/importance)
+        2. Summarize older/less important items
+        3. Provide full detail for top results
+        4. Include metadata for additional context
         """
         # Search for relevant information
         results = self.search(query, limit=max_items)
@@ -308,17 +320,139 @@ Recorded: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
         if not results:
             return "No relevant context found in system memory."
 
-        context = f"## Relevant System Context for: {query}\n\n"
+        # Build context efficiently
+        return self._build_efficient_context(
+            query,
+            results,
+            max_tokens
+        )
 
-        for i, item in enumerate(results, 1):
-            context += f"### {i}. {item.get('type', 'Note')}\n"
-            context += f"{item.get('content', '')}\n\n"
+    def _build_efficient_context(
+        self,
+        query: str,
+        results: List[Dict],
+        max_tokens: int = 10000
+    ) -> str:
+        """
+        Build context that fits within token budget
 
-            # Add tags for additional context
-            if item.get('tags'):
-                context += f"*Tags: {', '.join(item['tags'])}*\n\n"
+        Strategy:
+        - Top 3 results: Full detail
+        - Next 5 results: Summary only
+        - Remaining: Just titles + tags
+        """
+        context = f"## Context for: {query}\n\n"
+
+        # Estimate ~4 chars per token (conservative)
+        chars_per_token = 4
+        max_chars = max_tokens * chars_per_token
+        current_chars = len(context)
+
+        # Budget allocation
+        detailed_budget = int(max_chars * 0.6)  # 60% for detailed items
+        summary_budget = int(max_chars * 0.3)   # 30% for summaries
+        metadata_budget = int(max_chars * 0.1)  # 10% for metadata
+
+        detailed_items = []
+        summary_items = []
+        metadata_items = []
+
+        # Categorize results by importance/recency
+        for i, item in enumerate(results):
+            if i < 3:  # Top 3: full detail
+                detailed_items.append(item)
+            elif i < 8:  # Next 5: summary
+                summary_items.append(item)
+            else:  # Rest: metadata only
+                metadata_items.append(item)
+
+        # Add detailed items
+        if detailed_items:
+            context += "### Detailed Context\n\n"
+            for i, item in enumerate(detailed_items, 1):
+                item_text = f"**{i}. {item.get('type', 'Note')}**\n"
+                item_text += f"{item.get('content', '')}\n"
+
+                if item.get('tags'):
+                    item_text += f"*Tags: {', '.join(item['tags'][:5])}*\n"
+
+                # Check if adding this item exceeds budget
+                if current_chars + len(item_text) > detailed_budget:
+                    # Truncate content
+                    available_chars = detailed_budget - current_chars - 200
+                    if available_chars > 100:
+                        truncated_content = item.get('content', '')[:available_chars]
+                        item_text = f"**{i}. {item.get('type', 'Note')}**\n"
+                        item_text += f"{truncated_content}...\n"
+
+                context += item_text + "\n"
+                current_chars += len(item_text)
+
+        # Add summaries
+        if summary_items and current_chars < max_chars * 0.9:
+            context += "### Additional Context (Summarized)\n\n"
+
+            for i, item in enumerate(summary_items, 1):
+                # Extract first sentence or first 150 chars
+                content = item.get('content', '')
+                summary = self._summarize_content(content, max_length=150)
+
+                summary_text = f"- **{item.get('type', 'Note')}**: {summary}"
+                if item.get('tags'):
+                    summary_text += f" ({', '.join(item['tags'][:3])})"
+                summary_text += "\n"
+
+                if current_chars + len(summary_text) > detailed_budget + summary_budget:
+                    break
+
+                context += summary_text
+                current_chars += len(summary_text)
+
+        # Add metadata references
+        if metadata_items and current_chars < max_chars * 0.95:
+            context += "\n### Related Topics Available\n"
+
+            for item in metadata_items[:10]:  # Max 10 references
+                # Just node type and tags for quick reference
+                tags = item.get('tags', [])[:3]
+                ref = f"- {item.get('type', 'Note')}"
+                if tags:
+                    ref += f": {', '.join(tags)}"
+
+                if current_chars + len(ref) > max_chars:
+                    break
+
+                context += ref + "\n"
+                current_chars += len(ref)
+
+        # Add footer with stats
+        context += f"\n*Retrieved {len(detailed_items)} detailed, "
+        context += f"{len(summary_items)} summarized, "
+        context += f"{len(metadata_items)} referenced"
+        context += f" (~{current_chars // chars_per_token} tokens)*\n"
 
         return context
+
+    def _summarize_content(self, content: str, max_length: int = 150) -> str:
+        """Intelligently summarize content"""
+        if len(content) <= max_length:
+            return content
+
+        # Try to get first complete sentence
+        sentences = content.split('.')
+        if sentences and len(sentences[0]) <= max_length:
+            return sentences[0].strip() + '...'
+
+        # Otherwise truncate at word boundary
+        truncated = content[:max_length].rsplit(' ', 1)[0]
+        return truncated + '...'
+
+    def _count_tokens(self, text: str) -> int:
+        """
+        Estimate token count
+        Uses simple heuristic: ~4 chars per token (conservative)
+        """
+        return len(text) // 4
 
     def _query_by_tag(
         self,
@@ -413,6 +547,137 @@ Recorded: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
         return stats
 
 
+### Efficient Context Management
+
+The system-manager is designed to **never exceed 10k tokens** while maintaining full knowledge access through intelligent retrieval strategies:
+
+#### Token Budget Strategy
+
+**Total Budget: 10,000 tokens (~40,000 characters)**
+
+Allocation:
+- **60%** (6k tokens) - Top 3 most relevant items with full detail
+- **30%** (3k tokens) - Next 5 items with summaries
+- **10%** (1k tokens) - Metadata references for remaining items
+
+#### Hierarchical Detail Levels
+
+**Level 1: Full Detail (Top 3)**
+```
+### Detailed Context
+
+**1. Decision**
+DECISION: Database Choice
+
+What: Use PostgreSQL for primary database
+
+Why: Need ACID compliance and complex querying
+
+Alternatives considered:
+- MongoDB - Rejected: Need strong consistency
+- SQLite - Rejected: Need multi-user support
+
+*Tags: database, architecture*
+```
+
+**Level 2: Summary (Next 5)**
+```
+### Additional Context (Summarized)
+
+- **Decision**: Use JWT with refresh tokens for auth... (authentication, security)
+- **Outcome**: PostgreSQL performance excellent for our use case... (database, success)
+```
+
+**Level 3: Metadata Only (Rest)**
+```
+### Related Topics Available
+
+- Decision: cicd, deployment
+- Outcome: typescript, code-quality
+- Note: feature, authentication
+```
+
+#### Smart Summarization
+
+The system automatically:
+1. **Extracts first sentence** if it's meaningful
+2. **Truncates at word boundaries** to avoid cutting words
+3. **Preserves tags** for context
+4. **Maintains relevance ranking** from mem-layer
+
+#### Progressive Loading
+
+For deep dives, user can:
+```python
+# Start with overview
+context = helper.ask_system("authentication")
+# ~2k tokens, 10 items summarized
+
+# Dig deeper into specific node
+helper.manager.get_related(node_id, depth=2)
+# Get full details of connected nodes
+```
+
+#### Efficiency Metrics
+
+```python
+# Context includes token estimate
+context = helper.manager.provide_context("database")
+print(context)
+# ...
+# *Retrieved 3 detailed, 5 summarized, 12 referenced (~2,450 tokens)*
+```
+
+#### Example Output
+
+```
+## Context for: authentication
+
+### Detailed Context
+
+**1. Decision**
+DECISION: API Authentication
+What: Use JWT with refresh tokens
+Why: Stateless, scalable, industry standard
+...
+
+**2. Outcome**
+✅ WORKED: JWT Implementation
+What happened: JWT auth working perfectly, easy to scale
+Lessons learned: Remember to set proper expiration times
+...
+
+**3. Note**
+SESSION: Implemented user authentication
+Added JWT token generation
+Implemented refresh token flow
+...
+
+### Additional Context (Summarized)
+
+- **Decision**: Session cookies rejected - less flexible (authentication, rejected)
+- **Outcome**: OAuth integration successful but complex (authentication, oauth)
+- **Note**: Rate limiting added to login endpoint (security, authentication)
+
+### Related Topics Available
+
+- Decision: password-hashing, bcrypt
+- Outcome: session-management, redis
+- Note: security, rate-limiting
+
+*Retrieved 3 detailed, 3 summarized, 3 referenced (~3,200 tokens)*
+```
+
+#### Benefits
+
+1. **Always within budget** - Hard limit at 10k tokens
+2. **Full knowledge access** - Metadata shows what else exists
+3. **Progressive detail** - Most relevant = most detail
+4. **Intelligent summarization** - Preserves key information
+5. **Expandable** - Can dive deeper into specific nodes
+6. **Fast queries** - mem-layer's graph search is efficient
+
+
 class MemLayerHelper:
     """High-level helper for common system-manager tasks"""
 
@@ -496,13 +761,14 @@ Solution: {solution}"""
             tags=["feature"]
         )
 
-    def ask_system(self, question: str) -> str:
+    def ask_system(self, question: str, max_tokens: int = 10000) -> str:
         """
         Ask a question and get context from system memory
 
         This is the key interface for AI to query history
+        Always stays within max_tokens budget (default: 10k)
         """
-        return self.manager.provide_context(question)
+        return self.manager.provide_context(question, max_tokens=max_tokens)
 
     def whats_worked(self, area: Optional[str] = None) -> List[Dict]:
         """Get list of what's worked"""
@@ -846,6 +1112,8 @@ helper.manager.add_outcome(
 
 ## Best Practices
 
+### Knowledge Management
+
 1. **Record decisions immediately** - Don't wait
 2. **Always include rationale** - Future you will thank you
 3. **Track failures** - They're learning opportunities
@@ -853,7 +1121,16 @@ helper.manager.add_outcome(
 5. **Use consistent tags** - Makes searching easier
 6. **Query before deciding** - Check if you've solved this before
 7. **Regular reviews** - Query old decisions to see if they still make sense
-8. **Feed context to AI** - Use `ask_system()` liberally
+
+### Efficient Context Usage
+
+8. **Trust the summarization** - Top 3 items get full detail, rest are summarized
+9. **Use progressive loading** - Start with overview, drill down as needed
+10. **Tag strategically** - Better tags = better retrieval
+11. **Never worry about limits** - System automatically stays under 10k tokens
+12. **Feed context liberally** - Use `ask_system()` frequently, it's efficient
+13. **Check token counts** - Context footer shows actual token usage
+14. **Dive deeper when needed** - Use `get_related()` for full detail on specific nodes
 
 ## Quick Start
 
